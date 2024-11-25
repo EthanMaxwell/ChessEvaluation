@@ -43,7 +43,7 @@ def go_loop(searcher, hist, stop_event, max_movetime=0, max_depth=0, debug=False
             "depth": depth,
             "time": round(1000 * elapsed),
             "nodes": searcher.nodes,
-            "nps": round(searcher.nodes / elapsed),
+            "nps": round(elapsed and searcher.nodes / elapsed or 0),
         }
         if score >= gamma:
             fields["score cp"] = f"{score} lowerbound"
