@@ -19,27 +19,6 @@ async def load_engine_from_cmd(cmd, debug=False):
     return engine
 
 
-async def load_engine_from_conf(engine_args, name, debug=False):
-    args = next(a for a in engine_args if a["name"] == name)
-    curdir = str(pathlib.Path(__file__).parent)
-    popen_args = {}
-    if "workingDirectory" in args:
-        popen_args["cwd"] = args["workingDirectory"].replace("$FILE", curdir)
-    cmd = args["command"].split()
-    if cmd[0] == "$PYTHON":
-        cmd[0] = sys.executable
-    if args["protocol"] == "uci":
-        _, engine = await chess.engine.popen_uci(cmd, **popen_args)
-    elif args["protocol"] == "xboard":
-        _, engine = await chess.engine.popen_xboard(cmd, **popen_args)
-    if hasattr(engine, "debug"):
-        engine.debug(debug)
-    await engine.configure(
-        {opt["name"]: opt["value"] for opt in args.get("options", [])}
-    )
-    return engine
-
-
 def get_user_move(board):
     # Get well-formated move
     move = None
@@ -92,6 +71,45 @@ def print_unicode_board(board, perspective=chess.WHITE):
         print(f" {sc}   a b c d e f g h  {ec}\n")
     else:
         print(f" {sc}   h g f e d c b a  {ec}\n")
+        
+def piece_placement(pieces, white = True):
+    """Places the given pieces onto fen formate for the given colour."""
+    queue =  [char for char, count in pieces.items() for _ in range(count)]
+    board = ["k"]
+    cur_line = 0
+    left = True
+    
+    while len(queue) > 0:
+        cur_piece = queue.pop()
+        
+        if len(board[cur_line]) >= 8 or (cur_line == 0 and cur_piece == "p") :
+            cur_line += 1
+            board.append("")
+        
+        if left:
+            board[cur_line] = cur_piece + board[cur_line]
+        else:
+            board[cur_line] = board[cur_line] + cur_piece
+            
+        left = not left
+    
+    def fill_empty(line):
+        empty = (8 - len(line)) / 2
+        start = math.ceil(empty)
+        end = math.floor(empty)
+        line = (str(start) if start else "") + line + (str(end) if end else "")
+        return line
+    
+    for pos in range(len(board)):
+        board[pos] = fill_empty(board[pos])
+        
+    if white: board.reverse()
+        
+    fen_board = "/".join(board)
+    
+    if white: fen_board = fen_board.upper()
+        
+    return fen_board
 
 
 async def get_engine_move(engine, board, limit, game_id, multipv, debug=False):
@@ -180,7 +198,7 @@ async def play(engine, board, selfplay, pvs, time_limit, debug=False):
     game_id = random.random()
 
     while not board.is_game_over():
-        #print_unicode_board(board, perspective=user_color)
+        print_unicode_board(board, perspective=user_color)
         if not selfplay and user_color == board.turn:
             move = get_user_move(board)
             if move is None:
@@ -202,10 +220,25 @@ async def main():
     selfplay = True
     movetime = 0
     nodes = 0
-    
-    
     pvs = 1
-    fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+    
+    black = {
+        'p': 8,
+        'r': 2,
+        'n': 2,
+        'b': 2,
+        'q': 1,
+    }
+    
+    white = {
+        'p': 8,
+        'r': 2,
+        'n': 2,
+        'b': 2,
+        'q': 1,
+    }
+    
+    fen = "rnbqkbnr/pppppppp/1pppppp1/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 
     if debug:
         logging.basicConfig(level=logging.DEBUG)
