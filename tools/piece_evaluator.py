@@ -108,7 +108,13 @@ def print_unicode_board(board, perspective=chess.WHITE):
         
 def piece_placement(pieces):
     """Places the given pieces onto FEN formate for one side of the board"""
-    queue =  [char for char, count in pieces.items() for _ in range(count)]
+    piece_names = ['q', 'b', 'n', 'r', 'p']
+    queue =  []
+    for index, count in enumerate(pieces):
+        letter = piece_names[index]  # Get the corresponding letter
+        queue.extend([letter] * count)
+    queue.reverse()
+    
     board = ["k"]
     cur_line = 0
     left = True
@@ -147,12 +153,18 @@ def make_board_fen(black, white):
 
     board = "/".join(black_board)
     
-    board += "/" + "/".join(["8"] * (8 - len(black_board) - len(white_board))) + "/"
+    remaining_rows = 8 - len(black_board) - len(white_board)
+    if remaining_rows < 0:
+        raise ValueError("white and black pieces overlap")
+    elif remaining_rows == 0:
+        blank_rows = "/"
+    else:
+        blank_rows = "/" + "/".join(["8"] * remaining_rows) + "/"
+    board += blank_rows
     
     board += "/".join(white_board).upper()
 
     return board +  " w KQkq - 0 1"
-
 
 async def get_engine_move(engine, board, limit, game_id, multipv, debug=False):
     # XBoard engine doesn't support multipv, and there python-chess doesn't support
@@ -264,21 +276,9 @@ async def main():
     nodes = 0
     pvs = 1
     
-    black = {
-        'p': 24,
-        'r': 2,
-        'n': 2,
-        'b': 2,
-        'q': 1,
-    }
-    
-    white = {
-        'p': 8,
-        'r': 2,
-        'n': 2,
-        'b': 2,
-        'q': 4,
-    }
+    black = [2, 2, 2, 2, 2]
+
+    white = [2, 2, 2, 2, 2]
 
     if debug:
         logging.basicConfig(level=logging.DEBUG)
