@@ -11,6 +11,40 @@ import asyncio
 import pathlib
 import logging
 import math
+from deap import base, creator, tools, algorithms
+
+# Define the problem as a maximization problem
+creator.create("FitnessMax", base.Fitness, weights=(1.0,))
+creator.create("Individual", list, fitness=creator.FitnessMax)
+
+# Define the individual and population
+toolbox = base.Toolbox()
+# Define attribute generators for different ranges
+def attr_int_queen():
+    return random.randint(0, 2)
+def attr_int_bnr():
+    return random.randint(0, 4)
+
+def attr_int_pawn():
+    return random.randint(0, 15)
+
+# Define the individual and population
+toolbox = base.Toolbox()
+toolbox.register("individual", tools.initCycle, creator.Individual,
+                (attr_int_queen, attr_int_bnr, attr_int_bnr, attr_int_bnr, attr_int_pawn), n=1)
+toolbox.register("population", tools.initRepeat, list, toolbox.individual)
+
+# Define the evaluation function
+def eval_individual(individual):
+    # Implement your expensive comparison logic here
+    return sum(individual),  # Return a tuple
+
+# Register genetic operators
+toolbox.register("mate", tools.cxTwoPoint)
+toolbox.register("mutate", tools.mutUniformInt, low=[0, 0, 0, 0, 0], up=[4, 10, 10, 10, 25], indpb=0.1)
+toolbox.register("select", tools.selTournament, tournsize=3)
+toolbox.register("evaluate", eval_individual)
+
 
 async def load_engine_from_cmd(cmd, debug=False):
     _, engine = await chess.engine.popen_uci(cmd.split())
@@ -219,7 +253,7 @@ async def play(engine, board, selfplay, pvs, time_limit, debug=False):
         board.push(move)
 
     # Print status
-    #print_unicode_board(board, perspective=user_color)
+    print_unicode_board(board, perspective=user_color)
     print("Result:", board.result())
 
 
@@ -231,7 +265,7 @@ async def main():
     pvs = 1
     
     black = {
-        'p': 8,
+        'p': 24,
         'r': 2,
         'n': 2,
         'b': 2,
@@ -243,10 +277,8 @@ async def main():
         'r': 2,
         'n': 2,
         'b': 2,
-        'q': 1,
+        'q': 4,
     }
-    
-    fen = "rnbqkbnr/pppppppp/1pppppp1/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 
     if debug:
         logging.basicConfig(level=logging.DEBUG)
@@ -261,7 +293,7 @@ async def main():
     else:
         print(f"Playing against {engine.id['name']}.")
 
-    board = chess.Board(fen)
+    board = chess.Board(make_board_fen(black, white))
 
     if movetime:
         limit = chess.engine.Limit(time=movetime / 1000)
@@ -272,6 +304,16 @@ async def main():
             white_clock=30, black_clock=30, white_inc=1, black_inc=1
         )
 
+    population = toolbox.population(n=300)
+    hof = tools.HallOfFame(3)
+    stats = tools.Statistics(lambda ind: ind.fitness.values)
+    stats.register("max", max)
+    algorithms.eaSimple(population, toolbox, cxpb=0.5, mutpb=0.2, ngen=40,
+                        stats=stats, halloffame=hof, verbose=True)
+    
+    print("Best individual is:", hof[0])
+    print("Fitness of best individual:", hof[0].fitness.values)
+    
     try:
         await play(
             engine,
