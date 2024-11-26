@@ -72,8 +72,8 @@ def print_unicode_board(board, perspective=chess.WHITE):
     else:
         print(f" {sc}   h g f e d c b a  {ec}\n")
         
-def piece_placement(pieces, white = True):
-    """Places the given pieces onto fen formate for the given colour."""
+def piece_placement(pieces):
+    """Places the given pieces onto FEN formate for one side of the board"""
     queue =  [char for char, count in pieces.items() for _ in range(count)]
     board = ["k"]
     cur_line = 0
@@ -103,13 +103,21 @@ def piece_placement(pieces, white = True):
     for pos in range(len(board)):
         board[pos] = fill_empty(board[pos])
         
-    if white: board.reverse()
-        
-    fen_board = "/".join(board)
+    return board
+
+def make_board_fen(black, white):
+    """Puts all the given pieces into complete FEN formatted board"""
+    black_board = piece_placement(black)
+    white_board = piece_placement(white)
+    white_board.reverse()
+
+    board = "/".join(black_board)
     
-    if white: fen_board = fen_board.upper()
-        
-    return fen_board
+    board += "/" + "/".join(["8"] * (8 - len(black_board) - len(white_board))) + "/"
+    
+    board += "/".join(white_board).upper()
+
+    return board +  " w KQkq - 0 1"
 
 
 async def get_engine_move(engine, board, limit, game_id, multipv, debug=False):
