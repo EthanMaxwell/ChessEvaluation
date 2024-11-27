@@ -13,6 +13,14 @@ import logging
 import math
 from deap import base, creator, tools, algorithms
 
+opn_test_board = [1, 2, 2, 2, 8]
+piece_costs = [9, 3, 3, 4, 1]
+max_cost = 37
+penalty = 0.3
+game_num = 4
+pop_size = 30
+gen_num = 20
+turn_speed = 0.1
 
 async def load_engine_from_cmd(cmd, debug=False):
     _, engine = await chess.engine.popen_uci(cmd.split())
@@ -242,8 +250,10 @@ async def play(engine, board, selfplay, pvs, time_limit, debug=False, printout=F
 async def run_ea(engine):
     toolbox = setup_toolbox(engine)
     
+    print("Start")
+    
     # Create initial population
-    population = toolbox.population(n=50)
+    population = toolbox.population(n=pop_size)
     
     # Evaluate initial population
     fitnesses = []
@@ -254,7 +264,8 @@ async def run_ea(engine):
         ind.fitness.values = fit
     
     # Run the evolution
-    for gen in range(40):
+    for gen in range(gen_num):
+        print("Gen: " + str(gen + 1))
         # Select the next generation individuals
         offspring = toolbox.select(population, len(population))
         
@@ -283,7 +294,6 @@ async def run_ea(engine):
         
         # Replace the old population by the offspring
         population[:] = offspring
-        print(population[0])
     
     # Return the best individual
     return tools.selBest(population, 1)[0]
@@ -308,7 +318,7 @@ def setup_toolbox(engine):
 
     # Register genetic operators
     toolbox.register("mate", tools.cxTwoPoint)
-    toolbox.register("mutate", tools.mutUniformInt, low=[0, 0, 0, 0, 0], up=[4, 10, 10, 10, 25], indpb=0.1)
+    toolbox.register("mutate", tools.mutUniformInt, low=[0, 0, 0, 0, 0], up=[3, 8, 8, 8, 20], indpb=0.1)
     toolbox.register("select", tools.selTournament, tournsize=3)
     toolbox.register("evaluate", async_fitness_function, engine=engine)
     
@@ -316,27 +326,42 @@ def setup_toolbox(engine):
 
 async def async_fitness_function(individual, engine):
     #return sum(individual)/(individual[4]+1),
-    black = [1, 2, 2, 2, 8]
-    board = chess.Board(make_board_fen(black, individual))
-    wins = 0
+    cost = 0
+    for a, b in zip(piece_costs, individual):
+        cost += a * b
+    fitness = 0
+    start_board = make_board_fen(opn_test_board, individual)
+    
+    print("\nIndv: " + str(individual))
+    print("cost: " + str(cost))
+    
+    if cost > max_cost * 1.5:
+        print("Too costly, skipping tests")
+        return (game_num / 2 - (max_cost - cost) * penalty),
 
-    for _ in range(3):
+
+    for _ in range(game_num):
+        board = chess.Board(start_board)
         outcome = await play(
             engine,
             board,
             selfplay=True,
             pvs=1,
-            time_limit=chess.engine.Limit(time=0.1),
+            time_limit=chess.engine.Limit(time=turn_speed),
             debug=False,
             printout=False
         )
-        
-    print(outcome)
-    if outcome:
-        wins += 1
+        if outcome:
+            fitness += 1
 
+    print("Wins:" + str(fitness))
     
-    return wins,  # Return a tuple
+    if cost > max_cost:
+        fitness += (max_cost - cost) * penalty
+    
+    print("Fitness:" + str(fitness))
+    
+    return fitness,  # Return a tuple
 
 # Define the problem as a maximization problem
 creator.create("FitnessMax", base.Fitness, weights=(1.0,))
@@ -352,28 +377,6 @@ async def main():
         # Process the result as needed
         print("Best individual:", result)
         print("Fitness of best individual:", result.fitness.values)
-        
-        black = [1, 2, 2, 2, 8]
-        board = chess.Board(make_board_fen(black, result))
-        wins = 0
-
-        for _ in range(3):
-            outcome = await play(
-                engine,
-                board,
-                selfplay=True,
-                pvs=1,
-                time_limit=chess.engine.Limit(time=1),
-                debug=True,
-                printout=False
-            )
-        
-            print(board)
-            print(outcome)
-            if outcome:
-                wins += 1
-
-        print(wins),  # Return a tuple
     finally:
         await engine.quit()
 
