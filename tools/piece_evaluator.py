@@ -337,7 +337,7 @@ async def async_fitness_function(individual, engine):
     
     if cost > max_cost * 1.5:
         print("Too costly, skipping tests")
-        return (game_num / 2 - (max_cost - cost) * penalty),
+        return (game_num / 2 + (max_cost - cost) * penalty),
 
 
     for _ in range(game_num):
