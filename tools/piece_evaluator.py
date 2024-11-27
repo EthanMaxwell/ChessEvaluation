@@ -140,7 +140,7 @@ async def get_engine_move(engine, board, limit, game_id, multipv, debug=False):
     if isinstance(engine, chess.engine.XBoardProtocol):
         play_result = await engine.play(board, limit, game=game_id)
         return play_result.move
-
+    
     multipv = min(multipv, board.legal_moves.count())
     with await engine.analysis(
         board, limit, game=game_id, info=chess.engine.INFO_ALL, multipv=multipv or None
@@ -208,7 +208,7 @@ async def get_engine_move(engine, board, limit, game_id, multipv, debug=False):
         return analysis.info["pv"][0]
 
 
-async def play(engine, board, selfplay, pvs, time_limit, debug=False):
+async def play(engine, board, selfplay, pvs, time_limit, debug=False, printout=False):
     if not selfplay:
         user_color = get_user_color()
     else:
@@ -220,56 +220,71 @@ async def play(engine, board, selfplay, pvs, time_limit, debug=False):
     game_id = random.random()
 
     while not board.is_game_over():
-        print_unicode_board(board, perspective=user_color)
+        if printout: print_unicode_board(board, perspective=user_color)
         if not selfplay and user_color == board.turn:
             move = get_user_move(board)
-            if move is None:
+            if move is None:    
                 return
         else:
             move = await get_engine_move(
                 engine, board, time_limit, game_id, pvs, debug=debug
             )
-            print(f" My move: {board.san(move)}")
+            if printout: print(f" My move: {board.san(move)}")
         board.push(move)
 
     # Print status
-    print_unicode_board(board, perspective=user_color)
-    print("Result:", board.result())
-
-
-async def main():
-    debug = False
-    selfplay = True
-    movetime = 0
-    nodes = 0
-    pvs = 1
-    
-    black = [2, 2, 2, 2, 2]
-
-    white = [2, 2, 2, 2, 2]
-
-    if debug:
-        logging.basicConfig(level=logging.DEBUG)
-    else:
-        logging.basicConfig(level=logging.ERROR)
-
-    engine = await load_engine_from_cmd("python sunfish.py", debug=debug)
-    
-    board = chess.Board(make_board_fen(black, white))
-
-    if movetime:
-        limit = chess.engine.Limit(time=movetime / 1000)
-    elif nodes:
-        limit = chess.engine.Limit(nodes=nodes)
-    else:
-        limit = chess.engine.Limit(
-            white_clock=30, black_clock=30, white_inc=1, black_inc=1
-        )
+    if printout:
+        print_unicode_board(board, perspective=user_color)
+        print("Result:", board.result())
         
-    # Define the problem as a maximization problem
-    creator.create("FitnessMax", base.Fitness, weights=(1.0,))
-    creator.create("Individual", list, fitness=creator.FitnessMax)
+    return board.outcome().winner
 
+async def run_ea(engine):
+    toolbox = setup_toolbox(engine)
+    
+    # Create initial population
+    population = toolbox.population(n=50)
+    
+    # Evaluate initial population
+    loop = asyncio.get_event_loop()
+    fitnesses = await asyncio.gather(*(loop.run_until_complete(toolbox.evaluate(ind)) for ind in population))
+    for ind, fit in zip(population, fitnesses):
+        ind.fitness.values = fit
+    
+    # Run the evolution
+    for gen in range(40):
+        # Select the next generation individuals
+        offspring = toolbox.select(population, len(population))
+        
+        # Clone the selected individuals
+        offspring = list(map(toolbox.clone, offspring))
+        
+        # Apply crossover and mutation
+        for child1, child2 in zip(offspring[::2], offspring[1::2]):
+            if random.random() < 0.5:
+                toolbox.mate(child1, child2)
+                del child1.fitness.values
+                del child2.fitness.values
+
+        for mutant in offspring:
+            if random.random() < 0.2:
+                toolbox.mutate(mutant)
+                del mutant.fitness.values
+        
+        # Evaluate the individuals with an invalid fitness
+        invalid_ind = [ind for ind in offspring if not ind.fitness.valid]
+        fitnesses = await asyncio.gather(*(toolbox.evaluate(ind) for ind in invalid_ind))
+        for ind, fit in zip(invalid_ind, fitnesses):
+            ind.fitness.values = fit
+        
+        # Replace the old population by the offspring
+        population[:] = offspring
+        print(population[0])
+    
+    # Return the best individual
+    return tools.selBest(population, 1)[0]
+
+def setup_toolbox(engine):
     # Define the individual and population
     toolbox = base.Toolbox()
     # Define attribute generators for different ranges
@@ -287,38 +302,74 @@ async def main():
                     (attr_int_queen, attr_int_bnr, attr_int_bnr, attr_int_bnr, attr_int_pawn), n=1)
     toolbox.register("population", tools.initRepeat, list, toolbox.individual)
 
-    # Define the evaluation function
-    def eval_individual(individual):
-        # Implement your expensive comparison logic here
-        return sum(individual),  # Return a tuple
-
     # Register genetic operators
     toolbox.register("mate", tools.cxTwoPoint)
     toolbox.register("mutate", tools.mutUniformInt, low=[0, 0, 0, 0, 0], up=[4, 10, 10, 10, 25], indpb=0.1)
     toolbox.register("select", tools.selTournament, tournsize=3)
-    toolbox.register("evaluate", eval_individual)
+    toolbox.register("evaluate", async_fitness_function, engine=engine)
+    
+    return toolbox
 
-    population = toolbox.population(n=300)
-    hof = tools.HallOfFame(3)
-    stats = tools.Statistics(lambda ind: ind.fitness.values)
-    stats.register("max", max)
-    algorithms.eaSimple(population, toolbox, cxpb=0.5, mutpb=0.2, ngen=40,
-                        stats=stats, halloffame=hof, verbose=True)
-    
-    print("Best individual is:", hof[0])
-    print("Fitness of best individual:", hof[0].fitness.values)
-    
-    try:
-        await play(
+async def async_fitness_function(individual, engine):
+    return sum(individual)/(individual[4]+1),
+    black = [1, 2, 2, 2, 8]
+    board = chess.Board(make_board_fen(black, individual))
+    wins = 0
+
+    for _ in range(3):
+        outcome = await play(
             engine,
             board,
-            selfplay=selfplay,
-            pvs=pvs,
-            time_limit=limit,
-            debug=debug,
+            selfplay=True,
+            pvs=1,
+            time_limit=chess.engine.Limit(time=1),
+            debug=logging.basicConfig(level=logging.DEBUG),
+            printout=False
         )
+        
+    print(outcome)
+    if outcome:
+        wins += 1
+
+    return wins,  # Return a tuple
+
+# Define the problem as a maximization problem
+creator.create("FitnessMax", base.Fitness, weights=(1.0,))
+creator.create("Individual", list, fitness=creator.FitnessMax)
+
+
+async def main():
+    engine = await load_engine_from_cmd("python sunfish.py")
+    
+       
+    try:
+        result = await run_ea(engine)
+        # Process the result as needed
+        print("Best individual:", result)
+        print("Fitness of best individual:", result.fitness.values)
+        
+        black = [1, 2, 2, 2, 8]
+        board = chess.Board(make_board_fen(black, result))
+        wins = 0
+
+        for _ in range(3):
+            outcome = await play(
+                engine,
+                board,
+                selfplay=True,
+                pvs=1,
+                time_limit=chess.engine.Limit(time=1),
+                debug=True,
+                printout=False
+            )
+        
+            print(board)
+            print(outcome)
+            if outcome:
+                wins += 1
+
+        print(wins),  # Return a tuple
     finally:
-        print("\nGoodbye!")
         await engine.quit()
 
 
