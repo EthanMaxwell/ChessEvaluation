@@ -13,38 +13,6 @@ import logging
 import math
 from deap import base, creator, tools, algorithms
 
-# Define the problem as a maximization problem
-creator.create("FitnessMax", base.Fitness, weights=(1.0,))
-creator.create("Individual", list, fitness=creator.FitnessMax)
-
-# Define the individual and population
-toolbox = base.Toolbox()
-# Define attribute generators for different ranges
-def attr_int_queen():
-    return random.randint(0, 2)
-def attr_int_bnr():
-    return random.randint(0, 4)
-
-def attr_int_pawn():
-    return random.randint(0, 15)
-
-# Define the individual and population
-toolbox = base.Toolbox()
-toolbox.register("individual", tools.initCycle, creator.Individual,
-                (attr_int_queen, attr_int_bnr, attr_int_bnr, attr_int_bnr, attr_int_pawn), n=1)
-toolbox.register("population", tools.initRepeat, list, toolbox.individual)
-
-# Define the evaluation function
-def eval_individual(individual):
-    # Implement your expensive comparison logic here
-    return sum(individual),  # Return a tuple
-
-# Register genetic operators
-toolbox.register("mate", tools.cxTwoPoint)
-toolbox.register("mutate", tools.mutUniformInt, low=[0, 0, 0, 0, 0], up=[4, 10, 10, 10, 25], indpb=0.1)
-toolbox.register("select", tools.selTournament, tournsize=3)
-toolbox.register("evaluate", eval_individual)
-
 
 async def load_engine_from_cmd(cmd, debug=False):
     _, engine = await chess.engine.popen_uci(cmd.split())
@@ -287,12 +255,6 @@ async def main():
 
     engine = await load_engine_from_cmd("python sunfish.py", debug=debug)
     
-
-    if "author" in engine.id:
-        print(f"Playing against {engine.id['name']} by {engine.id['author']}.")
-    else:
-        print(f"Playing against {engine.id['name']}.")
-
     board = chess.Board(make_board_fen(black, white))
 
     if movetime:
@@ -303,6 +265,38 @@ async def main():
         limit = chess.engine.Limit(
             white_clock=30, black_clock=30, white_inc=1, black_inc=1
         )
+        
+    # Define the problem as a maximization problem
+    creator.create("FitnessMax", base.Fitness, weights=(1.0,))
+    creator.create("Individual", list, fitness=creator.FitnessMax)
+
+    # Define the individual and population
+    toolbox = base.Toolbox()
+    # Define attribute generators for different ranges
+    def attr_int_queen():
+        return random.randint(0, 2)
+    def attr_int_bnr():
+        return random.randint(0, 4)
+
+    def attr_int_pawn():
+        return random.randint(0, 15)
+
+    # Define the individual and population
+    toolbox = base.Toolbox()
+    toolbox.register("individual", tools.initCycle, creator.Individual,
+                    (attr_int_queen, attr_int_bnr, attr_int_bnr, attr_int_bnr, attr_int_pawn), n=1)
+    toolbox.register("population", tools.initRepeat, list, toolbox.individual)
+
+    # Define the evaluation function
+    def eval_individual(individual):
+        # Implement your expensive comparison logic here
+        return sum(individual),  # Return a tuple
+
+    # Register genetic operators
+    toolbox.register("mate", tools.cxTwoPoint)
+    toolbox.register("mutate", tools.mutUniformInt, low=[0, 0, 0, 0, 0], up=[4, 10, 10, 10, 25], indpb=0.1)
+    toolbox.register("select", tools.selTournament, tournsize=3)
+    toolbox.register("evaluate", eval_individual)
 
     population = toolbox.population(n=300)
     hof = tools.HallOfFame(3)
