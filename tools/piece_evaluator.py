@@ -246,8 +246,10 @@ async def run_ea(engine):
     population = toolbox.population(n=50)
     
     # Evaluate initial population
-    loop = asyncio.get_event_loop()
-    fitnesses = await asyncio.gather(*(loop.run_until_complete(toolbox.evaluate(ind)) for ind in population))
+    fitnesses = []
+    for ind in population:
+        fitnesses.append(await toolbox.evaluate(ind))
+        
     for ind, fit in zip(population, fitnesses):
         ind.fitness.values = fit
     
@@ -273,7 +275,9 @@ async def run_ea(engine):
         
         # Evaluate the individuals with an invalid fitness
         invalid_ind = [ind for ind in offspring if not ind.fitness.valid]
-        fitnesses = await asyncio.gather(*(toolbox.evaluate(ind) for ind in invalid_ind))
+        fitnesses = []
+        for ind in invalid_ind:
+            fitnesses.append(await toolbox.evaluate(ind))
         for ind, fit in zip(invalid_ind, fitnesses):
             ind.fitness.values = fit
         
@@ -311,7 +315,7 @@ def setup_toolbox(engine):
     return toolbox
 
 async def async_fitness_function(individual, engine):
-    return sum(individual)/(individual[4]+1),
+    #return sum(individual)/(individual[4]+1),
     black = [1, 2, 2, 2, 8]
     board = chess.Board(make_board_fen(black, individual))
     wins = 0
@@ -322,8 +326,8 @@ async def async_fitness_function(individual, engine):
             board,
             selfplay=True,
             pvs=1,
-            time_limit=chess.engine.Limit(time=1),
-            debug=logging.basicConfig(level=logging.DEBUG),
+            time_limit=chess.engine.Limit(time=0.1),
+            debug=False,
             printout=False
         )
         
@@ -331,6 +335,7 @@ async def async_fitness_function(individual, engine):
     if outcome:
         wins += 1
 
+    
     return wins,  # Return a tuple
 
 # Define the problem as a maximization problem
