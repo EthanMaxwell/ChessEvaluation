@@ -15,10 +15,10 @@ from deap import base, creator, tools, algorithms
 
 opn_test_board = [1, 2, 2, 2, 8]
 piece_costs = [9, 3, 3, 4, 1]
-max_cost = 37
+max_cost = 35
 penalty = 0.3
 game_num = 4
-pop_size = 16 # Each pop uses own engine which throws errors if too high
+pop_size = 14 # Each pop uses own engine which throws errors if too high
 gen_num = 20
 elite_size = 1
 mutation_rate = 0.2
@@ -272,7 +272,7 @@ async def run_ea(engine_pool):
     
     # Run the evolution
     for gen in range(gen_num):
-        print(f"Gen: {gen + 1}")
+        print(f"\nGen: {gen + 1}")
         
         # Select the next generation individuals
         offspring = toolbox.select(population, len(population) - elite_size)
@@ -316,11 +316,10 @@ async def async_fitness_function(individual, engine_pool, n):
     cost = 0
     for a, b in zip(piece_costs, individual):
         cost += a * b
-    fitness = 0
+    wins = 0
     start_board = make_board_fen(opn_test_board, individual)
     
-    print("\n" + str(n) + " Indv: " + str(individual))
-    print("cost: " + str(cost))
+    print(f"\n#{n}, Indv: {individual}, Cost: {cost}")
     
     if (cost - max_cost) * penalty > game_num:
         # Over cost penalty is so large it doesn't matter if you win
@@ -340,14 +339,16 @@ async def async_fitness_function(individual, engine_pool, n):
             printout=False
         )
         if outcome:
-            fitness += 1
+            wins += 1
 
-    print(str(n) + "Wins:" + str(fitness))
+    
     
     if cost > max_cost:
-        fitness -= (cost - max_cost) * penalty
+        fitness = wins - (cost - max_cost) * penalty
+    else:
+        fitness = wins
     
-    print("Fitness:" + str(fitness))
+    print(f"\n#{n}, Wins: {wins}, Fitness: {fitness:.2f}")
     
     return fitness,  # Return a tuple
 
