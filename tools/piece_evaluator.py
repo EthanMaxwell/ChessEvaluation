@@ -16,20 +16,22 @@ from deap import base, creator, tools, algorithms
 OP_TEST_BOARD = [1, 2, 2, 2, 8]
 PIECE_COSTS = [9, 3, 3, 4, 1]
 MAX_COST = 35
-PENALTY = 0.3
+PENALTY = 0.4
 GAME_NUM = 4
-POP_SIZE = 14 # Each pop uses own engine which throws errors if too high
+POP_SIZE = 40 # Each pop uses own engine which throws errors if too high
 GEN_NUM = 20
 ELITE_NUM = 1
 MUT_RATE = 0.2
 CX_RATE = 0.5
-TURN_TIME = 0.01
+TURN_TIME = 0.2
+BATCH_SIZE = 10
 
 async def load_engine_from_cmd(cmd, debug=False):
     engine_pool = []
-    for _ in range(POP_SIZE):
+    for i in range(BATCH_SIZE):
         _, engine = await chess.engine.popen_uci(cmd.split())
         engine_pool.append(engine)
+        engine.id = i
         
     return engine_pool
 
@@ -252,80 +254,87 @@ async def play(engine, board, selfplay, pvs, time_limit, debug=False, printout=F
         
     return board.outcome().winner
 
+# Modify the evaluation function to use a batch of individuals
+async def evaluate_batch(toolbox, batch, engine_pool):
+    coroutines = []
+    # Assign a different engine to each individual in the batch
+    for i, ind in enumerate(batch):
+        coroutines.append(toolbox.evaluate(ind, engine=engine_pool[i]))
+    
+    # Run the batch in parallel
+    fitnesses = await asyncio.gather(*coroutines)
+    
+    # Assign the fitness values back to the individuals
+    for ind, fitness in zip(batch, fitnesses):
+        ind.fitness.values = fitness
+
+async def evaluate_pop(population, toolbox, engine_pool):
+    batch_size = len(engine_pool)
+    # Split the population into batches of size `batch_size`
+    batches = [population[i:i+batch_size] for i in range(0, len(population), batch_size)]
+    # Process each batch sequentially, but evaluate concurrently within each batch
+    for batch in batches:
+        await evaluate_batch(toolbox, batch, engine_pool)
 
 async def run_ea(engine_pool):
-    toolbox = setup_toolbox(engine_pool)
+    toolbox = setup_toolbox()
     
     print("Start")
     
     # Create initial population
     population = toolbox.population(n=POP_SIZE)
     
-    # Evaluate initial population
-    coroutines = [toolbox.evaluate(ind, n=i) for i, ind in enumerate(population)]
-    
-
-    fitnesses = await asyncio.gather(*coroutines)
-                
-    for ind, fit in zip(population, fitnesses):
-        ind.fitness.values = fit
-    
-    # Run the evolution
     for gen in range(GEN_NUM):
-        print(f"\nGen: {gen + 1}")
+        # Evaluate the individuals in the population
+        await evaluate_pop(population, toolbox, engine_pool)
+        print(f"Generation {gen}")
+        print(population)
         
-        # Select the next generation individuals
-        offspring = toolbox.select(population, len(population) - ELITE_NUM)
+        # Select the next generation's parents
+        offspring = toolbox.select(population, len(population))
         
-        # Clone the selected individuals
+        # Clone the selected parents to create the offspring
         offspring = list(map(toolbox.clone, offspring))
         
-        # Apply crossover and mutation
-        for child1, child2 in zip(offspring[::2], offspring[1::2]):
-            if random.random() < CX_RATE:
-                toolbox.mate(child1, child2)
-                del child1.fitness.values
-                del child2.fitness.values
+        # Apply crossover and mutation on the offspring
+        for i in range(0, len(offspring), 2):
+            if random.random() < CX_RATE:  # Crossover probability
+                toolbox.mate(offspring[i], offspring[i + 1])
+                del offspring[i].fitness.values
+                del offspring[i + 1].fitness.values
 
-        for mutant in offspring:
-            if random.random() < MUT_RATE:
-                toolbox.mutate(mutant)
-                del mutant.fitness.values
+        for i in range(len(offspring)):
+            if random.random() < MUT_RATE:  # Mutation probability
+                toolbox.mutate(offspring[i])
+                del offspring[i].fitness.values
         
-        # Evaluate the individuals with an invalid fitness
+        # Evaluate the fitness of the new individuals     
         invalid_ind = [ind for ind in offspring if not ind.fitness.valid]
+        await evaluate_pop(invalid_ind, toolbox, engine_pool)
         
-        coroutines = [toolbox.evaluate(ind, n=i) for i, ind in enumerate(invalid_ind)]
-        fitnesses = await asyncio.gather(*coroutines)
-
-        for ind, fit in zip(invalid_ind, fitnesses):
-            ind.fitness.values = fit
+        # Replace the old population with the new population
+        population[:] = offspring
         
-        # Elitism
-        elite = tools.selBest(population, ELITE_NUM)
+        best_individual = tools.selBest(population, 1)[0]
+        print(f"Best individual: {best_individual}, Fitness: {best_individual.fitness.values}")
         
-        
-        # Replace the old population by the offspring and elite
-        population[:] = offspring + elite
-    
-    # Return the best individual
     return tools.selBest(population, 1)[0]
 
-async def async_fitness_function(individual, engine_pool, n):
+async def async_fitness_function(individual, engine):
     #return sum(individual)/(individual[4]+1),
-    engine = engine_pool[n]
     cost = 0
     for a, b in zip(PIECE_COSTS, individual):
         cost += a * b
     wins = 0
     start_board = make_board_fen(OP_TEST_BOARD, individual)
     
-    print(f"\n#{n}, Indv: {individual}, Cost: {cost}")
+    print(f"\n#{engine.id}, Indv: {individual}, Cost: {cost}")
     
+    overdraft = cost - MAX_COST
     if (cost - MAX_COST) * PENALTY > GAME_NUM:
-        # Over cost penalty is so large it doesn't matter if you win
+        # Penalise being massively over budget
         print("Too costly, skipping tests")
-        return (GAME_NUM - (cost - MAX_COST) * PENALTY),
+        return 0 - (overdraft * PENALTY),
 
 
     for _ in range(GAME_NUM):
@@ -341,19 +350,25 @@ async def async_fitness_function(individual, engine_pool, n):
         )
         if outcome:
             wins += 1
-
     
-    
-    if cost > MAX_COST:
-        fitness = wins - (cost - MAX_COST) * PENALTY
+    if overdraft > 0:
+        # Penalise being over budget
+        fitness = wins - (overdraft * PENALTY)
+    elif wins == 0 and overdraft < 0:
+        # Penalise losing all games while under budget
+        fitness = wins - (-overdraft * PENALTY)
+    elif overdraft < 0:
+        # Reward being under budget and winning
+        fitness = wins + ((-overdraft * PENALTY) * (wins / GAME_NUM))
     else:
+        # Everything else
         fitness = wins
     
-    print(f"\n#{n}, Wins: {wins}, Fitness: {fitness:.2f}")
+    print(f"\n#{engine.id}, Wins: {wins}, Fitness: {fitness:.2f}")
     
     return fitness,  # Return a tuple
 
-def setup_toolbox(engine_pool):
+def setup_toolbox():
     # Define the individual and population
     toolbox = base.Toolbox()
     # Define attribute generators for different ranges
@@ -373,9 +388,9 @@ def setup_toolbox(engine_pool):
 
     # Register genetic operators
     toolbox.register("mate", tools.cxTwoPoint)
-    toolbox.register("mutate", tools.mutUniformInt, low=[0, 0, 0, 0, 0], up=[3, 8, 8, 8, 20], indpb=0.1)
-    toolbox.register("select", tools.selTournament, tournsize=3)
-    toolbox.register("evaluate", async_fitness_function, engine_pool=engine_pool)
+    toolbox.register("mutate", tools.mutUniformInt, low=[0, 0, 0, 0, 0], up=[3, 8, 8, 8, 20], indpb=0.2)
+    toolbox.register("select", tools.selTournament, tournsize=5)
+    toolbox.register("evaluate", async_fitness_function)
     
     return toolbox
 
