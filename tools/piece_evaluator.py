@@ -20,6 +20,9 @@ penalty = 0.3
 game_num = 4
 pop_size = 30
 gen_num = 20
+elite_size = 1
+mutation_rate = 0.2
+crossover_rate = 0.5
 turn_speed = 0.1
 
 async def load_engine_from_cmd(cmd, debug=False):
@@ -247,6 +250,7 @@ async def play(engine, board, selfplay, pvs, time_limit, debug=False, printout=F
         
     return board.outcome().winner
 
+
 async def run_ea(engine):
     toolbox = setup_toolbox(engine)
     
@@ -255,7 +259,7 @@ async def run_ea(engine):
     # Create initial population
     population = toolbox.population(n=pop_size)
     
-    # Evaluate initial population
+     # Evaluate initial population
     fitnesses = []
     for ind in population:
         fitnesses.append(await toolbox.evaluate(ind))
@@ -265,22 +269,23 @@ async def run_ea(engine):
     
     # Run the evolution
     for gen in range(gen_num):
-        print("Gen: " + str(gen + 1))
+        print(f"Gen: {gen + 1}")
+        
         # Select the next generation individuals
-        offspring = toolbox.select(population, len(population))
+        offspring = toolbox.select(population, len(population) - elite_size)
         
         # Clone the selected individuals
         offspring = list(map(toolbox.clone, offspring))
         
         # Apply crossover and mutation
         for child1, child2 in zip(offspring[::2], offspring[1::2]):
-            if random.random() < 0.5:
+            if random.random() < crossover_rate:
                 toolbox.mate(child1, child2)
                 del child1.fitness.values
                 del child2.fitness.values
 
         for mutant in offspring:
-            if random.random() < 0.2:
+            if random.random() < mutation_rate:
                 toolbox.mutate(mutant)
                 del mutant.fitness.values
         
@@ -292,11 +297,54 @@ async def run_ea(engine):
         for ind, fit in zip(invalid_ind, fitnesses):
             ind.fitness.values = fit
         
-        # Replace the old population by the offspring
-        population[:] = offspring
+        # Elitism
+        elite = tools.selBest(population, elite_size)
+        
+        # Replace the old population by the offspring and elite
+        population[:] = offspring + elite
     
     # Return the best individual
     return tools.selBest(population, 1)[0]
+
+async def async_fitness_function(individual, engine):
+    #return sum(individual)/(individual[4]+1),
+    cost = 0
+    for a, b in zip(piece_costs, individual):
+        cost += a * b
+    fitness = 0
+    start_board = make_board_fen(opn_test_board, individual)
+    
+    print("\nIndv: " + str(individual))
+    print("cost: " + str(cost))
+    
+    if (cost - max_cost) * penalty > game_num:
+        # Over cost penalty is so large it doesn't matter if you win
+        print("Too costly, skipping tests")
+        return (game_num - (cost - max_cost) * penalty),
+
+
+    for _ in range(game_num):
+        board = chess.Board(start_board)
+        outcome = await play(
+            engine,
+            board,
+            selfplay=True,
+            pvs=1,
+            time_limit=chess.engine.Limit(time=turn_speed),
+            debug=False,
+            printout=False
+        )
+        if outcome:
+            fitness += 1
+
+    print("Wins:" + str(fitness))
+    
+    if cost > max_cost:
+        fitness -= (cost - max_cost) * penalty
+    
+    print("Fitness:" + str(fitness))
+    
+    return fitness,  # Return a tuple
 
 def setup_toolbox(engine):
     # Define the individual and population
@@ -323,45 +371,6 @@ def setup_toolbox(engine):
     toolbox.register("evaluate", async_fitness_function, engine=engine)
     
     return toolbox
-
-async def async_fitness_function(individual, engine):
-    #return sum(individual)/(individual[4]+1),
-    cost = 0
-    for a, b in zip(piece_costs, individual):
-        cost += a * b
-    fitness = 0
-    start_board = make_board_fen(opn_test_board, individual)
-    
-    print("\nIndv: " + str(individual))
-    print("cost: " + str(cost))
-    
-    if cost > max_cost * 1.5:
-        print("Too costly, skipping tests")
-        return (game_num / 2 + (max_cost - cost) * penalty),
-
-
-    for _ in range(game_num):
-        board = chess.Board(start_board)
-        outcome = await play(
-            engine,
-            board,
-            selfplay=True,
-            pvs=1,
-            time_limit=chess.engine.Limit(time=turn_speed),
-            debug=False,
-            printout=False
-        )
-        if outcome:
-            fitness += 1
-
-    print("Wins:" + str(fitness))
-    
-    if cost > max_cost:
-        fitness += (max_cost - cost) * penalty
-    
-    print("Fitness:" + str(fitness))
-    
-    return fitness,  # Return a tuple
 
 # Define the problem as a maximization problem
 creator.create("FitnessMax", base.Fitness, weights=(1.0,))
