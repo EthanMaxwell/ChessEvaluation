@@ -13,21 +13,21 @@ import logging
 import math
 from deap import base, creator, tools, algorithms
 
-opn_test_board = [1, 2, 2, 2, 8]
-piece_costs = [9, 3, 3, 4, 1]
-max_cost = 35
-penalty = 0.3
-game_num = 4
-pop_size = 14 # Each pop uses own engine which throws errors if too high
-gen_num = 20
-elite_size = 1
-mutation_rate = 0.2
-crossover_rate = 0.5
-turn_speed = 0.01
+OP_TEST_BOARD = [1, 2, 2, 2, 8]
+PIECE_COSTS = [9, 3, 3, 4, 1]
+MAX_COST = 35
+PENALTY = 0.3
+GAME_NUM = 4
+POP_SIZE = 14 # Each pop uses own engine which throws errors if too high
+GEN_NUM = 20
+ELITE_NUM = 1
+MUT_RATE = 0.2
+CX_RATE = 0.5
+TURN_TIME = 0.01
 
 async def load_engine_from_cmd(cmd, debug=False):
     engine_pool = []
-    for _ in range(pop_size):
+    for _ in range(POP_SIZE):
         _, engine = await chess.engine.popen_uci(cmd.split())
         engine_pool.append(engine)
         
@@ -259,7 +259,7 @@ async def run_ea(engine_pool):
     print("Start")
     
     # Create initial population
-    population = toolbox.population(n=pop_size)
+    population = toolbox.population(n=POP_SIZE)
     
     # Evaluate initial population
     coroutines = [toolbox.evaluate(ind, n=i) for i, ind in enumerate(population)]
@@ -271,24 +271,24 @@ async def run_ea(engine_pool):
         ind.fitness.values = fit
     
     # Run the evolution
-    for gen in range(gen_num):
+    for gen in range(GEN_NUM):
         print(f"\nGen: {gen + 1}")
         
         # Select the next generation individuals
-        offspring = toolbox.select(population, len(population) - elite_size)
+        offspring = toolbox.select(population, len(population) - ELITE_NUM)
         
         # Clone the selected individuals
         offspring = list(map(toolbox.clone, offspring))
         
         # Apply crossover and mutation
         for child1, child2 in zip(offspring[::2], offspring[1::2]):
-            if random.random() < crossover_rate:
+            if random.random() < CX_RATE:
                 toolbox.mate(child1, child2)
                 del child1.fitness.values
                 del child2.fitness.values
 
         for mutant in offspring:
-            if random.random() < mutation_rate:
+            if random.random() < MUT_RATE:
                 toolbox.mutate(mutant)
                 del mutant.fitness.values
         
@@ -302,7 +302,8 @@ async def run_ea(engine_pool):
             ind.fitness.values = fit
         
         # Elitism
-        elite = tools.selBest(population, elite_size)
+        elite = tools.selBest(population, ELITE_NUM)
+        
         
         # Replace the old population by the offspring and elite
         population[:] = offspring + elite
@@ -314,27 +315,27 @@ async def async_fitness_function(individual, engine_pool, n):
     #return sum(individual)/(individual[4]+1),
     engine = engine_pool[n]
     cost = 0
-    for a, b in zip(piece_costs, individual):
+    for a, b in zip(PIECE_COSTS, individual):
         cost += a * b
     wins = 0
-    start_board = make_board_fen(opn_test_board, individual)
+    start_board = make_board_fen(OP_TEST_BOARD, individual)
     
     print(f"\n#{n}, Indv: {individual}, Cost: {cost}")
     
-    if (cost - max_cost) * penalty > game_num:
+    if (cost - MAX_COST) * PENALTY > GAME_NUM:
         # Over cost penalty is so large it doesn't matter if you win
         print("Too costly, skipping tests")
-        return (game_num - (cost - max_cost) * penalty),
+        return (GAME_NUM - (cost - MAX_COST) * PENALTY),
 
 
-    for _ in range(game_num):
+    for _ in range(GAME_NUM):
         board = chess.Board(start_board)
         outcome = await play(
             engine,
             board,
             selfplay=True,
             pvs=1,
-            time_limit=chess.engine.Limit(time=turn_speed),
+            time_limit=chess.engine.Limit(time=TURN_TIME),
             debug=False,
             printout=False
         )
@@ -343,8 +344,8 @@ async def async_fitness_function(individual, engine_pool, n):
 
     
     
-    if cost > max_cost:
-        fitness = wins - (cost - max_cost) * penalty
+    if cost > MAX_COST:
+        fitness = wins - (cost - MAX_COST) * PENALTY
     else:
         fitness = wins
     
