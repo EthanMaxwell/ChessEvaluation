@@ -18,18 +18,20 @@ piece_costs = [9, 3, 3, 4, 1]
 max_cost = 37
 penalty = 0.3
 game_num = 4
-pop_size = 30
+pop_size = 16 # Each pop uses own engine which throws errors if too high
 gen_num = 20
 elite_size = 1
 mutation_rate = 0.2
 crossover_rate = 0.5
-turn_speed = 0.1
+turn_speed = 0.01
 
 async def load_engine_from_cmd(cmd, debug=False):
-    _, engine = await chess.engine.popen_uci(cmd.split())
-    if hasattr(engine, "debug"):
-        engine.debug(debug)
-    return engine
+    engine_pool = []
+    for _ in range(pop_size):
+        _, engine = await chess.engine.popen_uci(cmd.split())
+        engine_pool.append(engine)
+        
+    return engine_pool
 
 
 def get_user_move(board):
@@ -251,19 +253,20 @@ async def play(engine, board, selfplay, pvs, time_limit, debug=False, printout=F
     return board.outcome().winner
 
 
-async def run_ea(engine):
-    toolbox = setup_toolbox(engine)
+async def run_ea(engine_pool):
+    toolbox = setup_toolbox(engine_pool)
     
     print("Start")
     
     # Create initial population
     population = toolbox.population(n=pop_size)
     
-     # Evaluate initial population
-    fitnesses = []
-    for ind in population:
-        fitnesses.append(await toolbox.evaluate(ind))
-        
+    # Evaluate initial population
+    coroutines = [toolbox.evaluate(ind, n=i) for i, ind in enumerate(population)]
+    
+
+    fitnesses = await asyncio.gather(*coroutines)
+                
     for ind, fit in zip(population, fitnesses):
         ind.fitness.values = fit
     
@@ -291,9 +294,10 @@ async def run_ea(engine):
         
         # Evaluate the individuals with an invalid fitness
         invalid_ind = [ind for ind in offspring if not ind.fitness.valid]
-        fitnesses = []
-        for ind in invalid_ind:
-            fitnesses.append(await toolbox.evaluate(ind))
+        
+        coroutines = [toolbox.evaluate(ind, n=i) for i, ind in enumerate(invalid_ind)]
+        fitnesses = await asyncio.gather(*coroutines)
+
         for ind, fit in zip(invalid_ind, fitnesses):
             ind.fitness.values = fit
         
@@ -306,15 +310,16 @@ async def run_ea(engine):
     # Return the best individual
     return tools.selBest(population, 1)[0]
 
-async def async_fitness_function(individual, engine):
+async def async_fitness_function(individual, engine_pool, n):
     #return sum(individual)/(individual[4]+1),
+    engine = engine_pool[n]
     cost = 0
     for a, b in zip(piece_costs, individual):
         cost += a * b
     fitness = 0
     start_board = make_board_fen(opn_test_board, individual)
     
-    print("\nIndv: " + str(individual))
+    print("\n" + str(n) + " Indv: " + str(individual))
     print("cost: " + str(cost))
     
     if (cost - max_cost) * penalty > game_num:
@@ -337,7 +342,7 @@ async def async_fitness_function(individual, engine):
         if outcome:
             fitness += 1
 
-    print("Wins:" + str(fitness))
+    print(str(n) + "Wins:" + str(fitness))
     
     if cost > max_cost:
         fitness -= (cost - max_cost) * penalty
@@ -346,7 +351,7 @@ async def async_fitness_function(individual, engine):
     
     return fitness,  # Return a tuple
 
-def setup_toolbox(engine):
+def setup_toolbox(engine_pool):
     # Define the individual and population
     toolbox = base.Toolbox()
     # Define attribute generators for different ranges
@@ -368,7 +373,7 @@ def setup_toolbox(engine):
     toolbox.register("mate", tools.cxTwoPoint)
     toolbox.register("mutate", tools.mutUniformInt, low=[0, 0, 0, 0, 0], up=[3, 8, 8, 8, 20], indpb=0.1)
     toolbox.register("select", tools.selTournament, tournsize=3)
-    toolbox.register("evaluate", async_fitness_function, engine=engine)
+    toolbox.register("evaluate", async_fitness_function, engine_pool=engine_pool)
     
     return toolbox
 
@@ -378,16 +383,17 @@ creator.create("Individual", list, fitness=creator.FitnessMax)
 
 
 async def main():
-    engine = await load_engine_from_cmd("python sunfish.py")
+    engine_pool = await load_engine_from_cmd("python sunfish.py")
     
        
     try:
-        result = await run_ea(engine)
+        result = await run_ea(engine_pool)
         # Process the result as needed
         print("Best individual:", result)
         print("Fitness of best individual:", result.fitness.values)
     finally:
-        await engine.quit()
+        for engine in engine_pool:
+            await engine.quit()
 
 
 asyncio.set_event_loop_policy(chess.engine.EventLoopPolicy())
